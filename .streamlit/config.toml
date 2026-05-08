@@ -7,8 +7,14 @@ textColor = "#e7e9ee"
 font = "sans serif"
 
 [server]
+# Bind loopback only — the UI is for the local user, not the LAN.
+address = "localhost"
 headless = false
 runOnSave = false
+enableCORS = true
+enableXsrfProtection = true
 
 [browser]
+# No usage analytics. Reinforced by env var STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+# set in pii_mask/__init__.py.
 gatherUsageStats = false

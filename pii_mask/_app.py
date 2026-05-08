@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
+# Import pii_mask FIRST so its __init__ sets telemetry-off env vars
+# before streamlit / transformers / huggingface_hub get loaded.
+from pii_mask import __version__
+from pii_mask.inference import load_pii_model, predict_spans
+from pii_mask.masking import mask_text, unmask_text
+from pii_mask.model_loader import fetch_model
+
 import json
 import time
 from html import escape
 from pathlib import Path
 
 import streamlit as st
-
-from pii_mask import __version__
-from pii_mask.inference import load_pii_model, predict_spans
-from pii_mask.masking import mask_text, unmask_text
-from pii_mask.model_loader import fetch_model
 
 
 _LABEL_COLORS: dict[str, tuple[str, str]] = {

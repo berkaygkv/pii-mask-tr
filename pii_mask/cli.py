@@ -43,11 +43,24 @@ def main(argv: list[str] | None = None) -> int:
         help="Re-download the model even if cached",
     )
     parser.add_argument(
+        "--offline",
+        action="store_true",
+        help=(
+            "Refuse all network access. Requires the model to already be "
+            "cached locally. Sets HF_HUB_OFFLINE=1 and TRANSFORMERS_OFFLINE=1."
+        ),
+    )
+    parser.add_argument(
         "--version",
         action="version",
         version=f"pii-mask-tr {__version__}",
     )
     args = parser.parse_args(argv)
+
+    if args.offline:
+        import os
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
     missing = [p for p in args.inputs if not p.exists()]
     if missing:

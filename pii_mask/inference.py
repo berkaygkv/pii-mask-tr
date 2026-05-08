@@ -114,13 +114,20 @@ def merge_window_spans(window_spans: list[dict], text: str) -> list[dict]:
 
 
 def load_pii_model(checkpoint_path: Path):
+    """Load the model from a local checkpoint dir. No network.
+
+    `local_files_only=True` is enforced — even if a tokenizer file is
+    missing, transformers will error out instead of silently fetching
+    from the Hub. Model files have already been downloaded once via
+    `pii_mask.model_loader.fetch_model`.
+    """
     checkpoint_path = Path(checkpoint_path)
     device = pick_device()
-    tokenizer = AutoTokenizer.from_pretrained(checkpoint_path)
+    tokenizer = AutoTokenizer.from_pretrained(checkpoint_path, local_files_only=True)
     if is_crf_checkpoint(checkpoint_path):
         model = BertCrfForTokenClassification.from_pretrained(checkpoint_path)
     else:
-        model = BertForTokenClassification.from_pretrained(checkpoint_path)
+        model = BertForTokenClassification.from_pretrained(checkpoint_path, local_files_only=True)
     model = model.to(device)
     model.eval()
     return model, tokenizer

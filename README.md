@@ -59,6 +59,33 @@ pii-mask --model-revision v6 document.pdf
 
 `KISI_ADI` `TCKN` `SGK_NO` `VKN` `TELEFON` `EPOSTA` `ADRES` `TARIH` `POLICE_NO` `HASAR_DOSYA_NO` `PLAKA` `SASI_NO` `IBAN`
 
+## Privacy
+
+This is a privacy-first tool. Everything that matters runs on your machine.
+
+**What never leaves your machine:** the document text, the detected spans, the placeholder mapping, anything you paste into the UI, anything you upload. There is no analytics, no usage reporting, no error reporting. The Streamlit UI binds to `localhost` only.
+
+**What does go out, and only when:**
+
+- **First-run model download.** The BERTurk + CRF checkpoint is fetched from `huggingface.co/berkaygkv/pii-mask-turkish` once and cached at `~/.cache/pii-mask-tr/`. Your `HF_TOKEN` is sent as the `Authorization` header. Subsequent runs are local-only.
+- **First-run PDF dependencies.** The first time you process a PDF, [Docling](https://github.com/DS4SD/docling) downloads its layout / table-structure models from Hugging Face, and EasyOCR downloads its recognition weights from the JaidedAI GitHub releases. Both are one-time, model-only downloads. No telemetry.
+
+**Telemetry disabled by default.** The package sets these on import, before any framework loads:
+
+- `HF_HUB_DISABLE_TELEMETRY=1` — Hugging Face Hub + Transformers usage reporting
+- `STREAMLIT_BROWSER_GATHER_USAGE_STATS=false` — Streamlit analytics
+- `DO_NOT_TRACK=1` — community anti-telemetry convention
+
+You can override any of these by setting the env var to the opposite value before running.
+
+**Paranoid mode.** Once the model and PDF deps are cached, you can refuse all network access:
+
+```sh
+pii-mask --offline document.pdf
+```
+
+This sets `HF_HUB_OFFLINE=1` + `TRANSFORMERS_OFFLINE=1`. Any attempt to fetch anything will fail loudly instead of silently dialing out.
+
 ## License
 
 MIT.
