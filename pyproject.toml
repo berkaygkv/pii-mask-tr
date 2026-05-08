@@ -1,0 +1,31 @@
+[project]
+name = "pii-mask-tr"
+version = "0.1.0"
+description = "Turkish PII detection and masking for PDFs and text. Detects names, IDs, addresses, dates, plates, IBANs and 6 more entity classes; masks them as round-trippable placeholders so you can safely send a document to an LLM and reconstruct the original."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "Berkay Gokova" }]
+dependencies = [
+    "torch>=2.3",
+    "transformers>=4.45",
+    "pytorch-crf>=0.7.2",
+    "huggingface_hub>=0.25",
+    "docling>=2.0",
+    "streamlit>=1.40",
+]
+
+[project.scripts]
+pii-mask = "pii_mask.cli:main"
+pii-mask-ui = "pii_mask.ui:launch"
+
+[project.urls]
+Homepage = "https://github.com/berkaygkv/pii-mask-tr"
+Issues = "https://github.com/berkaygkv/pii-mask-tr/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["pii_mask"]
