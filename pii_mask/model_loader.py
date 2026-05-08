@@ -104,31 +104,45 @@ def _is_cached(target: Path) -> bool:
 
 def _resolve_explicit(
     repo_id: str | None, revision: str | None,
-) -> tuple[str, str] | None:
-    """If the user has pinned a specific repo / revision, return it.
-    Otherwise return None to engage the auto-resolve path."""
+) -> tuple[str, str, str] | None:
+    """If the user has pinned a specific repo / revision, return
+    `(repo, label, git_rev)`. Otherwise None — engages auto-resolve.
+
+    `label` is what we display + cache as. `git_rev` is what we ask
+    HF for. They diverge for the per-version-repo pattern, where the
+    version is in the repo name and the actual revision is `main`.
+    """
     explicit_rev = revision or os.getenv("PII_MASK_MODEL_REVISION")
     explicit_repo = repo_id or os.getenv("PII_MASK_MODEL_REPO")
-    if explicit_rev or explicit_repo:
-        rev = explicit_rev or KNOWN_REVISIONS[0]
-        repo = explicit_repo or _repo_for_revision(rev)
-        return repo, rev
-    return None
+    if not (explicit_rev or explicit_repo):
+        return None
+    if explicit_repo:
+        # User pinned a custom repo. Their revision is the git ref.
+        rev = explicit_rev or "main"
+        return explicit_repo, rev, rev
+    # User pinned only a model version → per-version-repo, files on main.
+    rev = explicit_rev or KNOWN_REVISIONS[0]
+    return _repo_for_revision(rev), rev, "main"
 
 
-def _download(repo: str, rev: str, *, refresh: bool, quiet: bool) -> Path:
-    target = _target_for(repo, rev)
+def _download(
+    repo: str, label: str, git_rev: str,
+    *, refresh: bool, quiet: bool,
+) -> Path:
+    """Fetch (or reuse cached) `repo` at `git_rev`. Cache + display
+    use `label`."""
+    target = _target_for(repo, label)
     token = os.getenv("HF_TOKEN")
     if not refresh and _is_cached(target):
         if not quiet:
-            print(f"  using cached model: {repo}@{rev}", file=sys.stderr)
+            print(f"  using cached model: {repo}@{label}", file=sys.stderr)
         return target
     if not quiet:
-        print(f"  downloading model: {repo}@{rev} ...", file=sys.stderr)
+        print(f"  downloading model: {repo}@{label} ...", file=sys.stderr)
     try:
         path = snapshot_download(
             repo_id=repo,
-            revision=rev,
+            revision=git_rev,
             local_dir=str(target),
             token=token,
             force_download=refresh,
@@ -136,33 +150,33 @@ def _download(repo: str, rev: str, *, refresh: bool, quiet: bool) -> Path:
     except RepositoryNotFoundError as exc:
         raise ModelLoadError(
             "not_found",
-            _NOT_FOUND_HINT.format(tried=f"{repo}@{rev}"),
-            repo=repo, revision=rev,
+            _NOT_FOUND_HINT.format(tried=f"{repo}@{label}"),
+            repo=repo, revision=label,
         ) from exc
     except GatedRepoError as exc:
         raise ModelLoadError(
             "gated",
-            _GATED_HINT.format(repo=repo, rev=rev),
-            repo=repo, revision=rev,
+            _GATED_HINT.format(repo=repo, rev=label),
+            repo=repo, revision=label,
         ) from exc
     except HfHubHTTPError as exc:
         msg = str(exc)
         if "404" in msg:
             raise ModelLoadError(
                 "not_found",
-                _NOT_FOUND_HINT.format(tried=f"{repo}@{rev}"),
-                repo=repo, revision=rev,
+                _NOT_FOUND_HINT.format(tried=f"{repo}@{label}"),
+                repo=repo, revision=label,
             ) from exc
         if "401" in msg or "403" in msg:
             raise ModelLoadError(
                 "unauthorized",
-                _AUTH_HINT.format(repo=repo, rev=rev),
-                repo=repo, revision=rev,
+                _AUTH_HINT.format(repo=repo, rev=label),
+                repo=repo, revision=label,
             ) from exc
         raise ModelLoadError(
             "fetch",
-            f"error fetching {repo}@{rev}: {exc}",
-            repo=repo, revision=rev,
+            f"error fetching {repo}@{label}: {exc}",
+            repo=repo, revision=label,
         ) from exc
     return Path(path)
 
@@ -199,30 +213,31 @@ def fetch_model(
 
     explicit = _resolve_explicit(repo_id, revision)
     if explicit is not None:
-        repo, rev = explicit
-        return _download(repo, rev, refresh=refresh, quiet=quiet)
+        repo, label, git_rev = explicit
+        return _download(repo, label, git_rev, refresh=refresh, quiet=quiet)
 
     # Auto-resolve. Cached wins regardless of network state.
     if not refresh:
-        for rev in KNOWN_REVISIONS:
-            repo = _repo_for_revision(rev)
-            target = _target_for(repo, rev)
+        for label in KNOWN_REVISIONS:
+            repo = _repo_for_revision(label)
+            target = _target_for(repo, label)
             if _is_cached(target):
                 if not quiet:
-                    print(f"  using cached model: {repo}@{rev}", file=sys.stderr)
+                    print(f"  using cached model: {repo}@{label}", file=sys.stderr)
                 return target
 
     last_fallback_err: ModelLoadError | None = None
-    for rev in KNOWN_REVISIONS:
-        repo = _repo_for_revision(rev)
+    for label in KNOWN_REVISIONS:
+        repo = _repo_for_revision(label)
         try:
-            return _download(repo, rev, refresh=refresh, quiet=quiet)
+            # Per-version repo: version is in the repo name; files on `main`.
+            return _download(repo, label, "main", refresh=refresh, quiet=quiet)
         except ModelLoadError as exc:
             if exc.kind in _AUTO_FALLBACK_KINDS:
                 last_fallback_err = exc
                 if not quiet:
                     print(
-                        f"  {repo}@{rev} unavailable ({exc.kind}), "
+                        f"  {repo}@{label} unavailable ({exc.kind}), "
                         "trying older revision …",
                         file=sys.stderr,
                     )
