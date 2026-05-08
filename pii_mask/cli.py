@@ -8,7 +8,7 @@ from pathlib import Path
 
 from pii_mask import __version__
 from pii_mask.inference import load_pii_model
-from pii_mask.model_loader import fetch_model
+from pii_mask.model_loader import ModelLoadError, fetch_model
 from pii_mask.pipeline import process_file
 
 
@@ -69,10 +69,15 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     _print("[1/3] preparing model …")
-    checkpoint = fetch_model(
-        revision=args.model_revision,
-        refresh=args.refresh_model,
-    )
+    try:
+        checkpoint = fetch_model(
+            revision=args.model_revision,
+            refresh=args.refresh_model,
+        )
+    except ModelLoadError as exc:
+        _print("")
+        _print(exc.hint)
+        return 2
 
     _print("[2/3] loading model …")
     model, tokenizer = load_pii_model(checkpoint)

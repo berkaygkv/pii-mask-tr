@@ -27,12 +27,42 @@ from huggingface_hub.utils import HfHubHTTPError
 DEFAULT_MODEL_REPO = "berkaygkv/pii-mask-turkish"
 DEFAULT_MODEL_REVISION = "v5"
 
+
+class ModelLoadError(Exception):
+    """Base for fetch_model failures. `hint` is a multi-line user
+    message; `kind` is `"not_found" | "gated" | "unauthorized" | "fetch"`."""
+
+    def __init__(self, kind: str, hint: str, *, repo: str, revision: str) -> None:
+        super().__init__(hint)
+        self.kind = kind
+        self.hint = hint
+        self.repo = repo
+        self.revision = revision
+
+
+_NOT_FOUND_HINT = (
+    "Model repo not found at {repo}@{rev}.\n"
+    "  - Check the repo + revision exist: https://huggingface.co/{repo}\n"
+    "  - If the model hasn't been pushed yet, bypass the Hub by setting\n"
+    "    PII_MASK_LOCAL_CHECKPOINT to a local checkpoint directory."
+)
+
+_GATED_HINT = (
+    "The model at {repo}@{rev} is private/gated.\n"
+    "  1. Request access at https://huggingface.co/{repo}\n"
+    "  2. Create a read token at https://huggingface.co/settings/tokens\n"
+    "  3. Set HF_TOKEN in your shell:\n"
+    "       bash:        export HF_TOKEN=hf_xxx\n"
+    "       powershell:  $env:HF_TOKEN = \"hf_xxx\"\n"
+    "     or run: huggingface-cli login\n"
+    "  4. Restart this app — env vars are captured at process start."
+)
+
 _AUTH_HINT = (
-    "\nThe Turkish PII model is currently private. To use it:\n"
-    "  1. Create a read token at https://huggingface.co/settings/tokens\n"
-    "  2. Request access at https://huggingface.co/{repo}\n"
-    "  3. Export it: export HF_TOKEN=hf_xxx   (or run: huggingface-cli login)\n"
-    "\nThe model will be made public in a future release; this step will go away.\n"
+    "Not authorized to access {repo}@{rev}.\n"
+    "  - Confirm your HF_TOKEN has read access to this repo.\n"
+    "  - Generate a new token at https://huggingface.co/settings/tokens\n"
+    "  - Restart this app after setting the token."
 )
 
 
@@ -68,6 +98,9 @@ def fetch_model(
 ) -> Path:
     """Download (or reuse cached) model snapshot. Returns local path.
 
+    Raises `ModelLoadError` on failure — callers (CLI, UI) decide how
+    to render the hint.
+
     `refresh=True` forces a re-download even if the revision is cached.
 
     `PII_MASK_LOCAL_CHECKPOINT` (env) bypasses HF entirely and returns
@@ -78,10 +111,12 @@ def fetch_model(
     if local_override:
         path = Path(local_override).expanduser().resolve()
         if not path.exists():
-            sys.stderr.write(
-                f"PII_MASK_LOCAL_CHECKPOINT points to a missing path: {path}\n"
+            raise ModelLoadError(
+                "fetch",
+                f"PII_MASK_LOCAL_CHECKPOINT points to a missing path: {path}",
+                repo=str(path),
+                revision="local",
             )
-            sys.exit(2)
         if not quiet:
             print(f"  using local checkpoint: {path}", file=sys.stderr)
         return path
@@ -106,15 +141,35 @@ def fetch_model(
             token=token,
             force_download=refresh,
         )
-    except (GatedRepoError, RepositoryNotFoundError) as exc:
-        sys.stderr.write(_AUTH_HINT.format(repo=repo))
-        sys.stderr.write(f"\n(underlying error: {exc.__class__.__name__})\n")
-        sys.exit(2)
+    except RepositoryNotFoundError as exc:
+        raise ModelLoadError(
+            "not_found",
+            _NOT_FOUND_HINT.format(repo=repo, rev=rev),
+            repo=repo, revision=rev,
+        ) from exc
+    except GatedRepoError as exc:
+        raise ModelLoadError(
+            "gated",
+            _GATED_HINT.format(repo=repo, rev=rev),
+            repo=repo, revision=rev,
+        ) from exc
     except HfHubHTTPError as exc:
         msg = str(exc)
+        if "404" in msg:
+            raise ModelLoadError(
+                "not_found",
+                _NOT_FOUND_HINT.format(repo=repo, rev=rev),
+                repo=repo, revision=rev,
+            ) from exc
         if "401" in msg or "403" in msg:
-            sys.stderr.write(_AUTH_HINT.format(repo=repo))
-            sys.exit(2)
-        sys.stderr.write(f"error fetching {repo}@{rev}: {exc}\n")
-        sys.exit(1)
+            raise ModelLoadError(
+                "unauthorized",
+                _AUTH_HINT.format(repo=repo, rev=rev),
+                repo=repo, revision=rev,
+            ) from exc
+        raise ModelLoadError(
+            "fetch",
+            f"error fetching {repo}@{rev}: {exc}",
+            repo=repo, revision=rev,
+        ) from exc
     return Path(path)

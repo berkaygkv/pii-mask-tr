@@ -7,7 +7,7 @@ from __future__ import annotations
 from pii_mask import __version__
 from pii_mask.inference import load_pii_model, predict_spans
 from pii_mask.masking import mask_text, unmask_text
-from pii_mask.model_loader import fetch_model
+from pii_mask.model_loader import ModelLoadError, fetch_model
 
 import json
 import time
@@ -311,10 +311,10 @@ st.title("Turkish PII detector")
 
 try:
     model, tokenizer = _bootstrap()
-except SystemExit:
-    st.error(
-        "Model is private — set `HF_TOKEN` "
-        "(https://huggingface.co/settings/tokens) and reload."
+except ModelLoadError as exc:
+    st.error(exc.hint)
+    st.caption(
+        f"repo: `{exc.repo}` · revision: `{exc.revision}` · kind: `{exc.kind}`"
     )
     st.stop()
 except Exception as exc:  # noqa: BLE001
