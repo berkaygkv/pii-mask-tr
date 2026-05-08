@@ -11,6 +11,7 @@ dependencies = [
     "transformers>=4.45",
     "pytorch-crf>=0.7.2",
     "huggingface_hub>=0.25",
+    "hf_transfer>=0.1.6",
     "docling>=2.0",
     "streamlit>=1.41",
 ]

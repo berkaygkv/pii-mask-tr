@@ -294,9 +294,15 @@ st.markdown(
 def _bootstrap():
     placeholder = st.empty()
     with placeholder.container():
-        with st.spinner("Loading model …"):
+        with st.status("Preparing model …", expanded=False) as status:
+            status.update(
+                label="Downloading model from Hugging Face "
+                "(~500 MB on first run, then cached) …"
+            )
             checkpoint = fetch_model(quiet=True)
+            status.update(label="Loading weights …")
             model, tokenizer = load_pii_model(checkpoint)
+            status.update(label="Ready", state="complete")
     placeholder.empty()
     return model, tokenizer
 

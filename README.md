@@ -61,6 +61,12 @@ pii-mask --model-revision v4 document.pdf
 
 `KISI_ADI` `TCKN` `SGK_NO` `VKN` `TELEFON` `EPOSTA` `ADRES` `TARIH` `POLICE_NO` `HASAR_DOSYA_NO` `PLAKA` `SASI_NO` `IBAN`
 
+## Performance
+
+The first run downloads the model from Hugging Face (~500 MB) and caches it under `~/.cache/pii-mask-tr/`. We use HF's Rust-based parallel downloader (`hf_transfer`) by default, which makes the first-run download 5-10× faster than the Python implementation. Set `HF_HUB_ENABLE_HF_TRANSFER=0` to opt out.
+
+Subsequent runs are local — model load is ~5 s, inference is ~1-3 s per page.
+
 ## Privacy
 
 This is a privacy-first tool. Everything that matters runs on your machine.

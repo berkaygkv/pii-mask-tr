@@ -23,6 +23,10 @@ _os.environ.setdefault("DO_NOT_TRACK", "1")
 _os.environ.setdefault("STREAMLIT_BROWSER_GATHER_USAGE_STATS", "false")
 # Suppress transformers' update-check on import.
 _os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
+# Enable HF's Rust-based parallel downloader (5-10x faster for large
+# checkpoints). The hf_transfer package is a hard dependency so this
+# is always available. Set to "0" to disable.
+_os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
 
 
 __version__ = "0.1.0"

@@ -68,7 +68,7 @@ def main(argv: list[str] | None = None) -> int:
             _print(f"error: not found: {p}")
         return 2
 
-    _print("[1/3] preparing model …")
+    _print("[1/3] fetching model (≈500 MB on first run, then cached) …")
     try:
         checkpoint = fetch_model(
             revision=args.model_revision,
