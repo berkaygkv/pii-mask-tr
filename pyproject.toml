@@ -1,6 +1,6 @@
 [project]
 name = "pii-mask-tr"
-version = "0.1.0"
+version = "0.2.0"
 description = "Turkish PII detection and masking for PDFs and text. Detects names, IDs, addresses, dates, plates, IBANs and 6 more entity classes; masks them as round-trippable placeholders so you can safely send a document to an LLM and reconstruct the original."
 readme = "README.md"
 license = { text = "MIT" }

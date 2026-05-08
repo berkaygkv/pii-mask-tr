@@ -31,7 +31,7 @@ from huggingface_hub.utils import HfHubHTTPError
 # entries that don't exist make every run pay an extra 404 round-trip and
 # can confuse users when HF returns 401 instead of 404 for missing private
 # repos.
-KNOWN_REVISIONS: list[str] = ["v4"]
+KNOWN_REVISIONS: list[str] = ["v6", "v4"]
 DEFAULT_REPO_PATTERN = "berkaygkv/pii-model-turkish-{revision}"
 
 # In auto-resolve mode (no explicit pin), fall through these error kinds
