@@ -13,6 +13,7 @@ dependencies = [
     "huggingface_hub>=0.25",
     "hf_transfer>=0.1.6",
     "docling>=2.0",
+    "easyocr>=1.7",
     "streamlit>=1.41",
 ]
 
