@@ -12,7 +12,7 @@ dependencies = [
     "pytorch-crf>=0.7.2",
     "huggingface_hub>=0.25",
     "docling>=2.0",
-    "streamlit>=1.40",
+    "streamlit>=1.41",
 ]
 
 [project.scripts]
