@@ -45,6 +45,8 @@ For a browser UI with detect / mask / unmask in one place:
 uvx --from git+https://github.com/berkaygkv/pii-mask-tr pii-mask-ui
 ```
 
+The UI has two tabs. **Detect** accepts either a PDF upload or a paste-text input (segmented control), runs detection, and shows: a summary strip with one chip per entity class and its count; a Highlighted view that paginates long documents with an optional "Only entity context" toggle; a Masked view with the placeholder-rewritten output; and a Mapping view with the placeholder→original JSON. **Unmask** accepts an LLM reply plus the mapping and reconstructs the original.
+
 ## Round trip
 
 ```text
@@ -89,7 +91,7 @@ This is a privacy-first tool. Everything that matters runs on your machine.
 
 **What does go out, and only when:**
 
-- **First-run model download.** The BERTurk + CRF checkpoint is fetched from `huggingface.co/berkaygkv/pii-mask-turkish` once and cached at `~/.cache/pii-mask-tr/`. Your `HF_TOKEN` is sent as the `Authorization` header. Subsequent runs are local-only.
+- **First-run model download.** The BERTurk + CRF checkpoint is fetched from `huggingface.co/berkaygkv/pii-model-turkish-v4` once and cached at `~/.cache/pii-mask-tr/`. Your `HF_TOKEN` is sent as the `Authorization` header. Subsequent runs are local-only.
 - **First-run PDF dependencies.** The first time you process a PDF, [Docling](https://github.com/DS4SD/docling) downloads its layout / table-structure models from Hugging Face, and EasyOCR downloads its recognition weights from the JaidedAI GitHub releases. Both are one-time, model-only downloads. No telemetry.
 
 **Telemetry disabled by default.** The package sets these on import, before any framework loads:
