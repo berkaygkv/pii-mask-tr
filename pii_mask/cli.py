@@ -1,4 +1,9 @@
-"""`pii-mask` — Turkish PII detection + masking CLI."""
+"""`pii-mask` — Turkish PII detection + masking CLI.
+
+Subcommands:
+  pii-mask warm                         — pre-download all models (one-time)
+  pii-mask <file> [<file> ...] [opts]  — process files
+"""
 
 from __future__ import annotations
 
@@ -12,11 +17,87 @@ from pii_mask.model_loader import ModelLoadError, fetch_model
 from pii_mask.pipeline import process_file
 
 
+_USAGE = """\
+usage:
+  pii-mask warm                          pre-download all models (one-time)
+  pii-mask <file> [<file> ...] [opts]    process PDFs / text files
+  pii-mask --help                        full options
+"""
+
+
 def _print(msg: str) -> None:
     print(msg, file=sys.stderr, flush=True)
 
 
-def main(argv: list[str] | None = None) -> int:
+# ---------------- warm subcommand ----------------
+
+def _cmd_warm(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="pii-mask warm",
+        description=(
+            "Pre-download every model the tool needs at runtime. Run once "
+            "after install; subsequent `pii-mask` and `pii-mask-ui` calls "
+            "skip all downloads and start instantly."
+        ),
+    )
+    parser.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Re-download even if already cached",
+    )
+    args = parser.parse_args(argv)
+
+    _print("Pre-downloading all models — this is a one-time setup.")
+    _print("")
+
+    # 1. PII model from HF.
+    _print("[1/3] PII detection model (BERTurk + CRF, ~500 MB)")
+    try:
+        checkpoint = fetch_model(refresh=args.refresh, quiet=False)
+    except ModelLoadError as exc:
+        _print("")
+        _print(exc.hint)
+        return 2
+    _print(f"      cached at {checkpoint}")
+
+    # 2. Docling layout + table models.
+    _print("")
+    _print("[2/3] PDF layout + table reader (Docling, ~1.5 GB)")
+    _print("      this is the big one — sit tight")
+    try:
+        from pii_mask.pdf_ingest import build_converter
+        build_converter()  # triggers Docling's internal HF downloads
+        _print("      ready")
+    except Exception as exc:  # noqa: BLE001
+        _print(f"      warning: docling setup failed: {exc}")
+        _print("      (docling models will retry on first PDF upload)")
+
+    # 3. EasyOCR weights for Turkish + English.
+    _print("")
+    _print("[3/3] OCR weights (EasyOCR — Turkish + English, ~95 MB)")
+    try:
+        import easyocr
+        easyocr.Reader(
+            ["tr", "en"],
+            gpu=False,
+            download_enabled=True,
+            verbose=False,
+        )
+        _print("      ready")
+    except Exception as exc:  # noqa: BLE001
+        _print(f"      warning: easyocr setup failed: {exc}")
+        _print("      (OCR weights will retry on first scanned PDF)")
+
+    _print("")
+    _print("✓ All models cached. You can now run:")
+    _print("    pii-mask document.pdf      (CLI)")
+    _print("    pii-mask-ui                (browser UI)")
+    return 0
+
+
+# ---------------- process subcommand ----------------
+
+def _cmd_process(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="pii-mask",
         description=(
@@ -24,6 +105,7 @@ def main(argv: list[str] | None = None) -> int:
             "Outputs three files next to each input: "
             "<name>.masked.txt, <name>.mapping.json, <name>.preview.html"
         ),
+        usage=_USAGE,
     )
     parser.add_argument("inputs", nargs="+", type=Path, help="PDF or .txt files")
     parser.add_argument(
@@ -69,6 +151,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     _print("[1/3] fetching model (≈500 MB on first run, then cached) …")
+    _print("      tip: run `pii-mask warm` once to pre-download all models")
     try:
         checkpoint = fetch_model(
             revision=args.model_revision,
@@ -114,6 +197,18 @@ def main(argv: list[str] | None = None) -> int:
         f"\ndone — {total_entities} entities across {len(args.inputs)} file(s)"
     )
     return 0
+
+
+# ---------------- dispatch ----------------
+
+def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:]) if argv is None else list(argv)
+    if argv and argv[0] in ("warm", "download", "init"):
+        return _cmd_warm(argv[1:])
+    if argv and argv[0] in ("-h", "--help"):
+        print(_USAGE, file=sys.stderr)
+        return 0
+    return _cmd_process(argv)
 
 
 if __name__ == "__main__":

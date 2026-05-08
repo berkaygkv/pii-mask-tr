@@ -15,7 +15,21 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 # 2. Set your HF token
 export HF_TOKEN=hf_xxx   # https://huggingface.co/settings/tokens
 
-# 3. Mask a PDF
+# 3. Pre-download all models (one-time, ~2 GB)
+uvx --from git+https://github.com/berkaygkv/pii-mask-tr pii-mask warm
+
+# 4. Mask a PDF
+uvx --from git+https://github.com/berkaygkv/pii-mask-tr pii-mask document.pdf
+```
+
+Step 3 is recommended on first install — it downloads the PII model, the Docling PDF reader, and the EasyOCR weights up front with progress feedback. Subsequent runs start instantly. If you skip it, the same downloads happen lazily on first use, but with less visibility.
+
+On Windows (PowerShell):
+
+```powershell
+irm https://astral.sh/uv/install.ps1 | iex
+$env:HF_TOKEN = "hf_xxx"
+uvx --from git+https://github.com/berkaygkv/pii-mask-tr pii-mask warm
 uvx --from git+https://github.com/berkaygkv/pii-mask-tr pii-mask document.pdf
 ```
 
