@@ -43,7 +43,9 @@ The mapping is the only thing you need to restore the original. It stays on disk
 
 ## Updating the model
 
-The model lives at `berkaygkv/pii-mask-turkish` on Hugging Face, with one revision per release (`v5`, `v6`, …). Each `pii-mask-tr` release pins a default. To get a newer one:
+The model is published on Hugging Face as `berkaygkv/pii-model-turkish-v4`, `…-v5`, etc. — one repo per version. The package keeps a list of known revisions ordered newest-first and picks the most recent one available, automatically falling back to older revisions if a newer one hasn't been published yet. **You don't need to set anything to get the latest** — it Just Works as new releases are pushed.
+
+To force a re-check against the Hub (e.g. after a new revision is published while your cache holds an older one):
 
 ```sh
 uvx --refresh --from git+https://github.com/berkaygkv/pii-mask-tr pii-mask document.pdf
@@ -52,7 +54,7 @@ uvx --refresh --from git+https://github.com/berkaygkv/pii-mask-tr pii-mask docum
 To pin a specific revision yourself:
 
 ```sh
-pii-mask --model-revision v6 document.pdf
+pii-mask --model-revision v4 document.pdf
 ```
 
 ## Entity classes
