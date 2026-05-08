@@ -7,9 +7,15 @@ from __future__ import annotations
 from pii_mask import __version__
 from pii_mask.inference import load_pii_model, predict_spans
 from pii_mask.masking import mask_text, unmask_text
-from pii_mask.model_loader import ModelLoadError, fetch_model
+from pii_mask.model_loader import (
+    ModelLoadError,
+    estimate_download_size_bytes,
+    expected_cache_target,
+    fetch_model,
+)
 
 import json
+import threading
 import time
 from html import escape
 from pathlib import Path
@@ -290,19 +296,82 @@ st.markdown(
 )
 
 
+def _dir_size_bytes(path: Path) -> int:
+    if not path.exists():
+        return 0
+    total = 0
+    try:
+        for p in path.rglob("*"):
+            try:
+                if p.is_file():
+                    total += p.stat().st_size
+            except (OSError, FileNotFoundError):
+                continue
+    except (OSError, FileNotFoundError):
+        return total
+    return total
+
+
 @st.cache_resource(show_spinner=False)
 def _bootstrap():
+    """First-run UX: show a live download progress bar (background thread
+    does the fetch, main thread polls the cache dir). Cached runs just
+    show a quick spinner while weights load."""
     placeholder = st.empty()
+    target = expected_cache_target()
+
+    # Cached already → no need for the progress UX.
+    if target.exists() and any(target.iterdir()):
+        with placeholder.container():
+            with st.spinner("Loading model …"):
+                checkpoint = fetch_model(quiet=True)
+                model, tokenizer = load_pii_model(checkpoint)
+        placeholder.empty()
+        return model, tokenizer
+
+    # Cold start: download in a worker thread, drive st.progress from main.
+    state: dict = {"done": False, "error": None, "checkpoint": None}
+
+    def _worker() -> None:
+        try:
+            state["checkpoint"] = fetch_model(quiet=True)
+        except Exception as exc:  # noqa: BLE001
+            state["error"] = exc
+        finally:
+            state["done"] = True
+
+    expected = max(1, estimate_download_size_bytes())
+    expected_mb = expected / (1024 * 1024)
+
+    thread = threading.Thread(target=_worker, daemon=True)
+    thread.start()
+
     with placeholder.container():
-        with st.status("Preparing model …", expanded=False) as status:
-            status.update(
-                label="Downloading model from Hugging Face "
-                "(~500 MB on first run, then cached) …"
+        bar = st.progress(
+            0,
+            text=f"Downloading model from Hugging Face · 0 / ~{expected_mb:.0f} MB",
+        )
+        while not state["done"]:
+            current = _dir_size_bytes(target)
+            current_mb = current / (1024 * 1024)
+            pct = min(int(current / expected * 100), 99)
+            bar.progress(
+                pct,
+                text=(
+                    f"Downloading model from Hugging Face · "
+                    f"{current_mb:.0f} / ~{expected_mb:.0f} MB"
+                ),
             )
-            checkpoint = fetch_model(quiet=True)
-            status.update(label="Loading weights …")
-            model, tokenizer = load_pii_model(checkpoint)
-            status.update(label="Ready", state="complete")
+            time.sleep(0.3)
+        thread.join(timeout=5)
+
+        if state["error"] is not None:
+            placeholder.empty()
+            raise state["error"]
+
+        bar.progress(100, text="Loading weights into memory …")
+        model, tokenizer = load_pii_model(state["checkpoint"])
+
     placeholder.empty()
     return model, tokenizer
 

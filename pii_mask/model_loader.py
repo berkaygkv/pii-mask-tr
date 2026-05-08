@@ -102,6 +102,43 @@ def _is_cached(target: Path) -> bool:
     return target.exists() and any(target.iterdir())
 
 
+def expected_cache_target() -> Path:
+    """Where the auto-resolve path will write the downloaded model.
+
+    Useful for UIs that want to poll the directory for live download
+    progress before `fetch_model` returns.
+    """
+    label = KNOWN_REVISIONS[0]
+    return _target_for(_repo_for_revision(label), label)
+
+
+def estimate_download_size_bytes(*, default_mb: int = 500) -> int:
+    """Best-effort total download size of the auto-resolve revision.
+
+    One HF API call (`model_info` with files metadata). Falls back to
+    `default_mb` MB if the API is unreachable or any field is missing.
+    Useful for sizing a progress bar before `snapshot_download` runs.
+    """
+    try:
+        from huggingface_hub import HfApi
+        api = HfApi(token=os.getenv("HF_TOKEN"))
+        label = KNOWN_REVISIONS[0]
+        repo = _repo_for_revision(label)
+        info = api.model_info(repo, files_metadata=True)
+        total = 0
+        for sib in info.siblings or []:
+            size = getattr(sib, "size", None) or getattr(sib, "lfs", None)
+            if isinstance(size, int):
+                total += size
+            elif size and hasattr(size, "size"):
+                total += size.size or 0
+        if total > 0:
+            return total
+    except Exception:  # noqa: BLE001
+        pass
+    return default_mb * 1024 * 1024
+
+
 def _resolve_explicit(
     repo_id: str | None, revision: str | None,
 ) -> tuple[str, str, str] | None:
