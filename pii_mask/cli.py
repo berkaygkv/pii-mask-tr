@@ -37,13 +37,19 @@ def _cmd_warm(argv: list[str]) -> int:
         description=(
             "Pre-download every model the tool needs at runtime. Run once "
             "after install; subsequent `pii-mask` and `pii-mask-ui` calls "
-            "skip all downloads and start instantly."
+            "skip all downloads and start instantly. Use --refresh to "
+            "upgrade to the latest published model — the loader queries "
+            "Hugging Face for the highest published vN, so a freshly "
+            "released model arrives without a `pii-mask-tr` release."
         ),
     )
     parser.add_argument(
         "--refresh",
         action="store_true",
-        help="Re-download even if already cached",
+        help=(
+            "Upgrade path: query HF for the latest model version, "
+            "re-download even if an older version is cached."
+        ),
     )
     args = parser.parse_args(argv)
 

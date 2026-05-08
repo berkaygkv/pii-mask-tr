@@ -1,20 +1,36 @@
 """Hugging Face model fetch + auth + revision pinning.
 
 The Turkish PII model is published as one HF repo per version, named
-`berkaygkv/pii-model-turkish-<revision>` — `…-v4`, `…-v5`, etc. The
-package keeps a `KNOWN_REVISIONS` list ordered newest-first; on every
-run we try the newest cached revision first, then fall through to
-older ones if it isn't cached and not yet pushed to the Hub.
+`berkaygkv/pii-model-turkish-<revision>` — `…-v4`, `…-v5`, etc.
 
-Each `pii-mask-tr` release bumps `KNOWN_REVISIONS` to advertise newer
-checkpoints. End users get the latest available without any flags;
-power users can still pin via `--model-revision` / `PII_MASK_MODEL_REVISION`
-or override the repo with `PII_MASK_MODEL_REPO`.
+Resolution strategy when no pin is set:
+
+1. **Cache-first short-circuit** — if any known revision is already on
+   disk, use it. Zero network. Keeps startup instant and offline-safe.
+2. **Live discovery** — when we *do* hit the network (cache miss or
+   ``--refresh``), call ``discover_latest_revision_on_hub()`` and use
+   the highest published ``vN`` as the primary candidate. This is the
+   key seam that lets a freshly-published model reach end users
+   *without* a `pii-mask-tr` release: the new repo on HF is enough.
+3. **Fallback to KNOWN_REVISIONS** — discovery returns ``None`` when
+   the Hub is unreachable, so the offline list still drives the walk.
+
+Each `pii-mask-tr` release may still bump ``KNOWN_REVISIONS`` to widen
+the offline fallback set, but a model bump alone no longer requires
+one. End users get the latest model with::
+
+    uvx --refresh --from git+https://github.com/berkaygkv/pii-mask-tr.git \\
+        pii-mask warm --refresh
+
+Power users can pin via ``--model-revision`` /
+``PII_MASK_MODEL_REVISION`` or override the repo with
+``PII_MASK_MODEL_REPO``.
 """
 
 from __future__ import annotations
 
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -26,13 +42,13 @@ from huggingface_hub.errors import (
 from huggingface_hub.utils import HfHubHTTPError
 
 
-# Newest revision first. Bump on each release that ships a newer model.
-# Keep this list to revisions that have actually been published to the Hub —
-# entries that don't exist make every run pay an extra 404 round-trip and
-# can confuse users when HF returns 401 instead of 404 for missing private
-# repos.
+# Offline fallback set, newest first. Used when ``list_models`` on the
+# Hub is unreachable (no network, HF down, ``HF_HUB_OFFLINE=1``). On a
+# healthy network the loader prefers ``discover_latest_revision_on_hub``
+# instead — this list does *not* need to be bumped on every model push.
 KNOWN_REVISIONS: list[str] = ["v6", "v4"]
 DEFAULT_REPO_PATTERN = "berkaygkv/pii-model-turkish-{revision}"
+_REPO_NAME_RE = re.compile(r"^berkaygkv/pii-model-turkish-(v\d+)$")
 
 # In auto-resolve mode (no explicit pin), fall through these error kinds
 # to the next-older revision. `unauthorized` is included because HF can
@@ -83,6 +99,73 @@ _AUTH_HINT = (
 )
 
 
+def discover_latest_revision_on_hub() -> str | None:
+    """Query HF for the highest published ``vN`` of the PII model.
+
+    Returns the revision label (e.g. ``"v7"``) or ``None`` if the Hub
+    is unreachable, the user is offline, or no matching repo exists.
+
+    This is the seam that lets a freshly pushed model reach end users
+    without a `pii-mask-tr` release: ``fetch_model`` calls this before
+    walking ``KNOWN_REVISIONS`` and uses the result as the primary
+    candidate when present.
+
+    All exceptions are swallowed by design — the caller treats failure
+    as "fall back to ``KNOWN_REVISIONS``", which preserves the
+    existing offline path. Authentication is honoured via ``HF_TOKEN``
+    so private/gated repos are visible to authorised users.
+    """
+
+    if os.getenv("HF_HUB_OFFLINE") == "1":
+        return None
+    try:
+        from huggingface_hub import HfApi
+
+        api = HfApi(token=os.getenv("HF_TOKEN"))
+        # ``search`` is a substring match against the model card; using
+        # it scopes the listing tightly so we are not paginating the
+        # whole author. The regex above does the strict filtering.
+        results = api.list_models(
+            author="berkaygkv",
+            search="pii-model-turkish",
+        )
+        best: tuple[int, str] | None = None
+        for model in results:
+            match = _REPO_NAME_RE.match(model.id)
+            if match is None:
+                continue
+            label = match.group(1)
+            n = int(label[1:])
+            if best is None or n > best[0]:
+                best = (n, label)
+        return best[1] if best else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _candidate_revisions(*, prefer_hub: bool) -> list[str]:
+    """Build the ordered list of revisions to try on the Hub.
+
+    With ``prefer_hub=True``, prepend the discovered latest revision
+    (de-duped against ``KNOWN_REVISIONS``). Discovery failure or
+    ``prefer_hub=False`` returns ``KNOWN_REVISIONS`` unchanged.
+
+    This is the only place the two sources are merged; everything else
+    in ``fetch_model`` walks the resulting list.
+    """
+
+    if not prefer_hub:
+        return list(KNOWN_REVISIONS)
+    discovered = discover_latest_revision_on_hub()
+    if discovered is None:
+        return list(KNOWN_REVISIONS)
+    out = [discovered]
+    for rev in KNOWN_REVISIONS:
+        if rev != discovered:
+            out.append(rev)
+    return out
+
+
 def _cache_dir() -> Path:
     base = os.getenv("PII_MASK_CACHE") or os.path.expanduser("~/.cache/pii-mask-tr")
     path = Path(base) / "models"
@@ -102,13 +185,26 @@ def _is_cached(target: Path) -> bool:
     return target.exists() and any(target.iterdir())
 
 
+def _primary_revision_for_ui() -> str:
+    """The revision a UI should target for progress display.
+
+    Discovery wins when the Hub is reachable so the progress bar polls
+    the directory ``fetch_model`` will actually populate; falls back to
+    ``KNOWN_REVISIONS[0]`` offline. Same merge rule as
+    ``_candidate_revisions(prefer_hub=True)[0]``.
+    """
+
+    return _candidate_revisions(prefer_hub=True)[0]
+
+
 def expected_cache_target() -> Path:
     """Where the auto-resolve path will write the downloaded model.
 
     Useful for UIs that want to poll the directory for live download
-    progress before `fetch_model` returns.
+    progress before `fetch_model` returns. Tracks the discovered
+    latest revision when the Hub is reachable.
     """
-    label = KNOWN_REVISIONS[0]
+    label = _primary_revision_for_ui()
     return _target_for(_repo_for_revision(label), label)
 
 
@@ -122,7 +218,7 @@ def estimate_download_size_bytes(*, default_mb: int = 500) -> int:
     try:
         from huggingface_hub import HfApi
         api = HfApi(token=os.getenv("HF_TOKEN"))
-        label = KNOWN_REVISIONS[0]
+        label = _primary_revision_for_ui()
         repo = _repo_for_revision(label)
         info = api.model_info(repo, files_metadata=True)
         total = 0
@@ -253,7 +349,9 @@ def fetch_model(
         repo, label, git_rev = explicit
         return _download(repo, label, git_rev, refresh=refresh, quiet=quiet)
 
-    # Auto-resolve. Cached wins regardless of network state.
+    # Auto-resolve. Cached wins regardless of network state — keeps
+    # offline runs fast and predictable. ``--refresh`` forces both a
+    # discovery query and a fresh download, which is the upgrade path.
     if not refresh:
         for label in KNOWN_REVISIONS:
             repo = _repo_for_revision(label)
@@ -263,8 +361,21 @@ def fetch_model(
                     print(f"  using cached model: {repo}@{label}", file=sys.stderr)
                 return target
 
+    # We are going to hit the network. Ask the Hub which version is
+    # newest so a freshly pushed model is picked up without waiting
+    # for a pii-mask-tr release. Discovery failure (offline / HF down)
+    # silently falls back to KNOWN_REVISIONS so the cached/offline
+    # path still works.
+    candidates = _candidate_revisions(prefer_hub=True)
+    if not quiet and candidates and candidates[0] not in KNOWN_REVISIONS:
+        print(
+            f"  discovered newer revision on Hub: {candidates[0]} "
+            f"(KNOWN_REVISIONS={KNOWN_REVISIONS})",
+            file=sys.stderr,
+        )
+
     last_fallback_err: ModelLoadError | None = None
-    for label in KNOWN_REVISIONS:
+    for label in candidates:
         repo = _repo_for_revision(label)
         try:
             # Per-version repo: version is in the repo name; files on `main`.
@@ -281,16 +392,17 @@ def fetch_model(
                 continue
             raise  # gated / fetch errors surface immediately
 
-    # All known revisions failed. Surface the most recent error so the
-    # user has the actionable hint (e.g. unauthorized → fix token).
+    # All candidates failed. Surface the most recent error so the user
+    # has the actionable hint (e.g. unauthorized → fix token).
     if last_fallback_err is not None:
         raise last_fallback_err
     tried = ", ".join(
-        _repo_for_revision(r) + "@" + r for r in KNOWN_REVISIONS
+        _repo_for_revision(r) + "@" + r for r in candidates
     )
+    head = candidates[0] if candidates else KNOWN_REVISIONS[0]
     raise ModelLoadError(
         "not_found",
         _NOT_FOUND_HINT.format(tried=tried),
-        repo=_repo_for_revision(KNOWN_REVISIONS[0]),
-        revision=KNOWN_REVISIONS[0],
+        repo=_repo_for_revision(head),
+        revision=head,
     )
