@@ -27,8 +27,19 @@ from huggingface_hub.utils import HfHubHTTPError
 
 
 # Newest revision first. Bump on each release that ships a newer model.
-KNOWN_REVISIONS: list[str] = ["v5", "v4"]
+# Keep this list to revisions that have actually been published to the Hub —
+# entries that don't exist make every run pay an extra 404 round-trip and
+# can confuse users when HF returns 401 instead of 404 for missing private
+# repos.
+KNOWN_REVISIONS: list[str] = ["v4"]
 DEFAULT_REPO_PATTERN = "berkaygkv/pii-model-turkish-{revision}"
+
+# In auto-resolve mode (no explicit pin), fall through these error kinds
+# to the next-older revision. `unauthorized` is included because HF can
+# return 401 for private repos that don't exist (privacy by obscurity);
+# without this, a missing newer revision would mask a perfectly fine
+# older one.
+_AUTO_FALLBACK_KINDS = frozenset({"not_found", "unauthorized"})
 
 
 class ModelLoadError(Exception):
@@ -201,22 +212,27 @@ def fetch_model(
                     print(f"  using cached model: {repo}@{rev}", file=sys.stderr)
                 return target
 
-    last_not_found: ModelLoadError | None = None
+    last_fallback_err: ModelLoadError | None = None
     for rev in KNOWN_REVISIONS:
         repo = _repo_for_revision(rev)
         try:
             return _download(repo, rev, refresh=refresh, quiet=quiet)
         except ModelLoadError as exc:
-            if exc.kind == "not_found":
-                last_not_found = exc
+            if exc.kind in _AUTO_FALLBACK_KINDS:
+                last_fallback_err = exc
                 if not quiet:
                     print(
-                        f"  {repo}@{rev} not on Hub, trying older revision …",
+                        f"  {repo}@{rev} unavailable ({exc.kind}), "
+                        "trying older revision …",
                         file=sys.stderr,
                     )
                 continue
-            raise  # gated / unauthorized / fetch surface immediately
+            raise  # gated / fetch errors surface immediately
 
+    # All known revisions failed. Surface the most recent error so the
+    # user has the actionable hint (e.g. unauthorized → fix token).
+    if last_fallback_err is not None:
+        raise last_fallback_err
     tried = ", ".join(
         _repo_for_revision(r) + "@" + r for r in KNOWN_REVISIONS
     )
@@ -225,4 +241,4 @@ def fetch_model(
         _NOT_FOUND_HINT.format(tried=tried),
         repo=_repo_for_revision(KNOWN_REVISIONS[0]),
         revision=KNOWN_REVISIONS[0],
-    ) from last_not_found
+    )
