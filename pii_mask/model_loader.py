@@ -69,7 +69,23 @@ def fetch_model(
     """Download (or reuse cached) model snapshot. Returns local path.
 
     `refresh=True` forces a re-download even if the revision is cached.
+
+    `PII_MASK_LOCAL_CHECKPOINT` (env) bypasses HF entirely and returns
+    the given local path. Useful for development against an unpublished
+    checkpoint.
     """
+    local_override = os.getenv("PII_MASK_LOCAL_CHECKPOINT")
+    if local_override:
+        path = Path(local_override).expanduser().resolve()
+        if not path.exists():
+            sys.stderr.write(
+                f"PII_MASK_LOCAL_CHECKPOINT points to a missing path: {path}\n"
+            )
+            sys.exit(2)
+        if not quiet:
+            print(f"  using local checkpoint: {path}", file=sys.stderr)
+        return path
+
     repo = resolve_model_repo(repo_id)
     rev = resolve_model_revision(revision)
     target = _cache_dir() / repo.replace("/", "__") / rev

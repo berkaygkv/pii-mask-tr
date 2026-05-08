@@ -69,11 +69,38 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-      .block-container { padding-top: 2rem; max-width: 1200px; }
-      h1 { font-weight: 500 !important; letter-spacing: -0.01em; }
+      /* Hide Streamlit's deploy-to-cloud button + hamburger menu — this
+         is a privacy-first local tool, not a hosted demo. */
+      header[data-testid="stHeader"] { display: none; }
+      [data-testid="stToolbar"] { display: none; }
+      .stDeployButton { display: none; }
+      #MainMenu { display: none; }
+
+      .block-container { padding-top: 2.5rem; max-width: 1180px; }
+      h1 {
+        font-weight: 500 !important;
+        letter-spacing: -0.015em;
+        font-size: 1.6rem !important;
+        margin-bottom: 1.5rem !important;
+      }
       .stTabs [data-baseweb="tab-list"] { gap: 4px; }
-      .stTabs [data-baseweb="tab"] { padding: 8px 18px; border-radius: 6px; }
-      [data-testid="stMetricValue"] { font-size: 22px; }
+      .stTabs [data-baseweb="tab"] {
+        padding: 8px 18px;
+        border-radius: 6px;
+      }
+      [data-testid="stMetricValue"] {
+        font-size: 20px;
+        font-weight: 500;
+      }
+      [data-testid="stMetricLabel"] {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        opacity: 0.6;
+      }
+      /* Compress the bootstrap status widget — it's a transient
+         loading affordance, not a content block. */
+      [data-testid="stStatusWidget"] { font-size: 13px; opacity: 0.7; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -82,12 +109,18 @@ st.markdown(
 
 @st.cache_resource(show_spinner=False)
 def _bootstrap():
-    with st.status("Preparing model …", expanded=False) as status:
-        status.update(label="Downloading model from Hugging Face …")
-        checkpoint = fetch_model(quiet=True)
-        status.update(label="Loading weights …")
-        model, tokenizer = load_pii_model(checkpoint)
-        status.update(label="Ready.", state="complete")
+    """Cached so the spinner only shows on the first session run.
+
+    Uses an inline `st.empty()` placeholder rather than `st.status`
+    so the banner *vanishes* on completion instead of leaving a
+    collapsed-but-visible block in the layout.
+    """
+    placeholder = st.empty()
+    with placeholder.container():
+        with st.spinner("Loading model …"):
+            checkpoint = fetch_model(quiet=True)
+            model, tokenizer = load_pii_model(checkpoint)
+    placeholder.empty()
     return model, tokenizer
 
 
@@ -98,53 +131,46 @@ def _converter():
 
 
 st.title("Turkish PII detector")
-st.caption(
-    "Drop a PDF or paste text. Detected entities are highlighted, masked "
-    "into round-trippable placeholders, and the mapping stays on this "
-    "machine so you can un-mask any LLM response."
-)
 
 try:
     model, tokenizer = _bootstrap()
 except SystemExit:
     st.error(
-        "The model is currently private. Set `HF_TOKEN` "
-        "(see https://huggingface.co/settings/tokens) and reload."
+        "Model is private — set `HF_TOKEN` "
+        "(https://huggingface.co/settings/tokens) and reload."
     )
     st.stop()
 except Exception as exc:  # noqa: BLE001
     st.error(f"Failed to load model: {exc}")
     st.stop()
 
-tab_detect, tab_unmask = st.tabs(["Detect & mask", "Unmask"])
+tab_detect, tab_unmask = st.tabs(["Detect", "Unmask"])
 
 with tab_detect:
     col_in, col_out = st.columns([5, 7], gap="large")
 
     with col_in:
-        st.markdown("##### Input")
         uploaded = st.file_uploader(
-            "Upload PDF",
+            "Upload",
             type=["pdf", "txt"],
             label_visibility="collapsed",
         )
         text_input = st.text_area(
-            "or paste text",
-            height=320,
-            placeholder="Sayın Berkay Gökova, …",
+            "paste",
+            height=300,
+            placeholder="Sayın Berkay Gökova,\n\nKimlik numarası 12345678901 olan …",
+            label_visibility="collapsed",
             key="paste_text",
         )
         run = st.button("Detect", type="primary", use_container_width=True)
 
     with col_out:
-        st.markdown("##### Output")
-
         text: str | None = None
         source_label = ""
         if run:
             if uploaded is not None:
                 if uploaded.name.lower().endswith(".pdf"):
-                    with st.spinner("Extracting PDF text …"):
+                    with st.spinner("Reading PDF …"):
                         from pii_mask.pdf_ingest import parse_pdf_bytes
                         text = parse_pdf_bytes(_converter(), uploaded.getvalue(), uploaded.name)
                 else:
@@ -153,38 +179,33 @@ with tab_detect:
             elif text_input.strip():
                 text = text_input
                 source_label = "pasted text"
-            else:
-                st.info("Upload a file or paste text on the left.")
 
         if text is not None:
             started = time.perf_counter()
-            with st.spinner("Detecting entities …"):
+            with st.spinner("Detecting …"):
                 spans = predict_spans(model, tokenizer, text)
             masked, mapping = mask_text(text, spans)
             elapsed = time.perf_counter() - started
 
-            m1, m2, m3 = st.columns(3)
+            m1, m2 = st.columns(2)
             m1.metric("Entities", len(spans))
-            m2.metric("Unique placeholders", len(mapping))
-            m3.metric("Time", f"{elapsed:.1f}s")
+            m2.metric("Time", f"{elapsed:.1f}s")
 
             st.session_state["last_mapping"] = mapping
             st.session_state["last_masked"] = masked
 
             view_tab, masked_tab, mapping_tab = st.tabs(
-                ["Highlights", "Masked text", "Mapping"]
+                ["Highlighted", "Masked", "Mapping"]
             )
             with view_tab:
-                st.markdown(_render_highlighted(text, spans), unsafe_allow_html=True)
+                with st.container(height=480, border=False):
+                    st.markdown(_render_highlighted(text, spans), unsafe_allow_html=True)
             with masked_tab:
-                st.caption(
-                    "Copy this and send it to your LLM. Use the Unmask tab "
-                    "to restore the response."
-                )
-                st.code(masked, language=None)
+                with st.container(height=480, border=False):
+                    st.code(masked, language=None)
             with mapping_tab:
-                st.caption(f"{len(mapping)} unique entities. Stays on this machine.")
-                st.json(mapping, expanded=True)
+                with st.container(height=480, border=False):
+                    st.json(mapping, expanded=True)
 
             st.download_button(
                 "Download mapping.json",
@@ -194,12 +215,6 @@ with tab_detect:
             )
 
 with tab_unmask:
-    st.markdown("##### Reconstruct an LLM response")
-    st.caption(
-        "Paste the LLM's reply (with `«LABEL_N»` placeholders) and the "
-        "mapping from the Detect tab."
-    )
-
     col_a, col_b = st.columns(2, gap="large")
     default_masked = st.session_state.get("last_masked", "")
     default_mapping = json.dumps(
@@ -210,25 +225,33 @@ with tab_unmask:
 
     with col_a:
         llm_response = st.text_area(
-            "LLM response (with placeholders)",
+            "Masked text or LLM reply",
             value=default_masked,
-            height=320,
+            height=300,
         )
     with col_b:
         mapping_text = st.text_area(
-            "mapping JSON",
+            "Mapping",
             value=default_mapping,
-            height=320,
+            height=300,
         )
 
     if st.button("Unmask", type="primary", use_container_width=True):
         try:
             mapping = json.loads(mapping_text or "{}")
         except json.JSONDecodeError as exc:
-            st.error(f"mapping is not valid JSON: {exc}")
+            st.error(f"Mapping is not valid JSON: {exc}")
         else:
             restored = unmask_text(llm_response, mapping)
-            st.markdown("##### Restored")
-            st.text_area("restored text", restored, height=320, label_visibility="collapsed")
+            with st.container(height=320, border=False):
+                st.text_area(
+                    "Restored",
+                    restored,
+                    height=300,
+                )
 
-st.caption(f"pii-mask-tr {__version__}")
+st.markdown(
+    f'<div style="text-align:center;opacity:0.4;font-size:11px;'
+    f'margin-top:48px;letter-spacing:0.05em;">pii-mask-tr {__version__}</div>',
+    unsafe_allow_html=True,
+)
